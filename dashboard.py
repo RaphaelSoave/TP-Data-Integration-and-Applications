@@ -1,7 +1,7 @@
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Data Quality Summary", layout="wide")
+st.set_page_config(page_title="Data Quality Summary Soave Raphael", layout="wide")
 
 DATA_DIR = "."
 
