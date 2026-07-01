@@ -21,7 +21,6 @@ def compute_metrics(_dfs):
         _dfs["caract"], _dfs["lieux"], _dfs["usagers"], _dfs["vehicules"],
     )
 
-    # --- Part B: missing values (true NaN + '-1' sentinel) ---
     missing = {}
     for name, df in _dfs.items():
         n = len(df)
@@ -40,7 +39,6 @@ def compute_metrics(_dfs):
             "sentinel": pd.Series(sentinel).sort_values(ascending=False) if sentinel else pd.Series(dtype=int),
         }
 
-    # --- Part C: consistency & validity ---
     lat = dfcaract["lat"].str.replace(",", ".").astype(float)
     lon = dfcaract["long"].str.replace(",", ".").astype(float)
     dep = dfcaract["dep"].astype(str)
@@ -85,9 +83,6 @@ def compute_metrics(_dfs):
 
     return missing, consistency
 
-
-# Expected identifier column(s) per file — what the ONISR documentation implies should
-# uniquely identify a row (1 row / accident, / vehicle, / person).
 CANDIDATE_KEYS = {
     "caract": ["Num_Acc"],
     "lieux": ["Num_Acc"],
@@ -140,7 +135,7 @@ dfs = load_data()
 missing, consistency = compute_metrics(dfs)
 pk_check = compute_pk_check(dfs)
 
-st.title("Data Quality Summary")
+st.title("Data Quality Summary Soave Raphael")
 st.caption(
     "French Road Safety Open Data 2024 (ONISR / data.gouv.fr) — "
     "consolidated Quality Report & Impact Analysis, based on Parts B and C."
