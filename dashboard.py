@@ -1,18 +1,7 @@
-"""
-Part 1.D — Data Quality Summary (Streamlit dashboard)
-
-French Road Safety Open Data 2024 (ONISR / data.gouv.fr)
-Synthesizes the findings of Part B (Missing Values & Completeness) and
-Part C (Consistency & Validity Checks) into a single quality report +
-impact analysis, as required by Part 1.D of the TP.
-
-Run with:  streamlit run part1_D_dashboard.py
-"""
-
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Part 1.D — Data Quality Summary", layout="wide")
+st.set_page_config(page_title="Data Quality Summary", layout="wide")
 
 DATA_DIR = "."
 
@@ -83,6 +72,7 @@ def compute_metrics(_dfs):
         "age_min": float(age.min()),
         "age_max": float(age.max()),
         "age_negative": int((age < 0).sum()),
+        "age_over_100": int((age > 100).sum()),
         "vma_impossible": len(impossible_vma),
         "vma_values": sorted(impossible_vma.unique().tolist()),
         "pr1_negative": len(neg_pr1),
@@ -96,10 +86,61 @@ def compute_metrics(_dfs):
     return missing, consistency
 
 
+# Expected identifier column(s) per file — what the ONISR documentation implies should
+# uniquely identify a row (1 row / accident, / vehicle, / person).
+CANDIDATE_KEYS = {
+    "caract": ["Num_Acc"],
+    "lieux": ["Num_Acc"],
+    "vehicules": ["id_vehicule"],
+    "usagers": ["id_usager"],
+}
+
+
+@st.cache_data
+def compute_pk_check(_dfs):
+    rows = []
+    for name, df in _dfs.items():
+        key_cols = CANDIDATE_KEYS[name]
+        n = len(df)
+        n_nulls = int(df[key_cols].isna().any(axis=1).sum())
+        n_distinct = int(df[key_cols].drop_duplicates().shape[0])
+        is_unique = n_distinct == n
+        is_valid = is_unique and n_nulls == 0
+
+        if is_valid:
+            reason = f"`{', '.join(key_cols)}` uniquely identifies every row — valid primary key."
+        elif name == "lieux":
+            reason = (
+                "**No valid primary key.** `Num_Acc` *should* identify exactly 1 row per accident "
+                "(as it does in `caract`), but it doesn't: 28.8% of accidents have 2 to 5 rows in "
+                "`lieux` (see Part C — relational integrity issue). The raw file provides no other "
+                "column that disambiguates these duplicate rows (no sequence/version number), so "
+                "there is no natural key — a surrogate key can only be created *after* deduplicating "
+                "in the Silver layer."
+            )
+        else:
+            reason = (
+                f"**No valid primary key.** `{', '.join(key_cols)}` is not unique and/or contains "
+                f"nulls ({n_distinct:,} distinct values / {n:,} rows, {n_nulls} nulls)."
+            ).replace(",", " ")
+
+        rows.append({
+            "File": name,
+            "Candidate key": ", ".join(key_cols),
+            "Rows": n,
+            "Distinct key values": n_distinct,
+            "Nulls in key": n_nulls,
+            "Valid PK?": "Yes" if is_valid else "No",
+            "Explanation": reason,
+        })
+    return pd.DataFrame(rows)
+
+
 dfs = load_data()
 missing, consistency = compute_metrics(dfs)
+pk_check = compute_pk_check(dfs)
 
-st.title("Part 1.D — Data Quality Summary")
+st.title("Data Quality Summary")
 st.caption(
     "French Road Safety Open Data 2024 (ONISR / data.gouv.fr) — "
     "consolidated Quality Report & Impact Analysis, based on Parts B and C."
@@ -121,6 +162,23 @@ with tab_overview:
     }
     for col, (name, df) in zip(cols, dfs.items()):
         col.metric(labels[name], f"{len(df):,} rows".replace(",", " "), f"{df.shape[1]} columns")
+
+    st.divider()
+    st.subheader("Primary key check")
+    st.markdown(
+        "For each file, is there a column (or set of columns) that uniquely and completely "
+        "identifies each row? Checked as: **distinct values == row count** and **no nulls** "
+        "in the candidate key."
+    )
+    st.dataframe(
+        pk_check.drop(columns=["Explanation"]),
+        use_container_width=True, hide_index=True,
+    )
+    for _, r in pk_check.iterrows():
+        if r["Valid PK?"] == "No":
+            st.warning(f"**{r['File']}** — {r['Explanation']}")
+        else:
+            st.caption(f"**{r['File']}**: {r['Explanation']}")
 
     st.divider()
     st.subheader("Missing values — true `NaN` vs. hidden `-1` sentinel")
@@ -201,6 +259,14 @@ with tab_report:
              issue="`adr` (postal address) missing",
              metric=f"{missing['caract']['nan'].get('adr', 0):,} rows (4.2%)".replace(",", " "),
              note="Low impact — `lat`/`long` (0% missing) is a strictly better location key."),
+        dict(sev="Low", category="Out-of-range value", file="usagers",
+             issue="Age range (all road users: drivers, passengers, pedestrians)",
+             metric=(f"{consistency['age_negative']} negative ages, "
+                     f"{consistency['age_over_100']} people > 100 y/o "
+                     f"(max {consistency['age_max']:.0f})"),
+             note="No negative ages found — clean on that front. The 6 centenarians "
+                  "(2 drivers, 2 passengers, 2 pedestrians, ages 101-110) are extreme but not "
+                  "impossible; worth a manual spot-check rather than a fix."),
     ]
 
     sev_filter = st.multiselect(
